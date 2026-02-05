@@ -71,17 +71,17 @@ changelog:
 brews:
   - name: wtp
     repository:
-      owner: satococoa
+      owner: ShotaIuchi
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    url_template: "https://github.com/satococoa/wtp/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    url_template: "https://github.com/ShotaIuchi/wtp/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     download_strategy: CurlDownloadStrategy
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
     commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
-    homepage: "https://github.com/satococoa/wtp"
-    description: "Worktree Plus - Enhanced worktree management with automated setup and hooks"
+    homepage: "https://github.com/ShotaIuchi/wtp"
+    description: "Worktree Plus - Enhanced worktree management with automated setup, hooks, and variable expansion in base_dir"
     license: "MIT"
     skip_upload: auto
     dependencies:
@@ -170,28 +170,29 @@ brews:
 
 release:
   github:
-    owner: satococoa
+    owner: ShotaIuchi
     name: wtp
   draft: false
   prerelease: auto
   name_template: "{{.ProjectName}} {{.Version}}"
   header: |
-    ## Worktree Plus (wtp) {{.Version}}
+    ## Worktree Plus (wtp) {{.Version}} - Fork with Variable Expansion
 
-    Welcome to this new release!
+    This is a fork of [satococoa/wtp](https://github.com/satococoa/wtp) with additional features:
+    - **Variable expansion in base_dir**: `${DIRNAME}`, `${PATHNAME}`, `${BRANCH}`, `${BRANCH_SLUG}`
 
   footer: |
     ## Installation
 
     ### Homebrew
     ```bash
-    brew install satococoa/tap/wtp
+    brew install shotaiuchi/tap/wtp
     ```
 
     ### Manual Installation
     Download the appropriate binary for your platform from the assets below.
 
-    **Full Changelog**: https://github.com/satococoa/wtp/compare/{{.PreviousTag}}...{{.Tag}}
+    **Full Changelog**: https://github.com/ShotaIuchi/wtp/compare/{{.PreviousTag}}...{{.Tag}}
 
 nfpms:
   - id: wtp
@@ -203,13 +204,13 @@ nfpms:
       {{- if eq .Arch "amd64" }}x86_64
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    vendor: satococoa
-    homepage: https://github.com/satococoa/wtp
-    maintainer: satococoa <satococoa@example.com>
+    vendor: ShotaIuchi
+    homepage: https://github.com/ShotaIuchi/wtp
+    maintainer: ShotaIuchi <shotaiuchi.develop@gmail.com>
     description: |-
       Worktree Plus - Enhanced worktree management with automated setup and hooks.
       A powerful Git worktree management tool that extends git's worktree functionality
-      with automated setup, branch tracking, and project-specific hooks.
+      with automated setup, branch tracking, project-specific hooks, and variable expansion.
     license: MIT
     formats:
       - deb

@@ -534,6 +534,145 @@ func TestResolveWorktreePath(t *testing.T) {
 	}
 }
 
+func TestExpandVariables(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		repoRoot   string
+		branchName string
+		expected   string
+	}{
+		{
+			name:       "expand DIRNAME",
+			input:      "../${DIRNAME}-worktrees",
+			repoRoot:   "/home/user/myproject",
+			branchName: "feature/auth",
+			expected:   "../myproject-worktrees",
+		},
+		{
+			name:       "expand PATHNAME",
+			input:      "${PATHNAME}/worktrees",
+			repoRoot:   "/home/user/myproject",
+			branchName: "feature/auth",
+			expected:   "/home/user/myproject/worktrees",
+		},
+		{
+			name:       "expand BRANCH",
+			input:      "../worktrees-${BRANCH}",
+			repoRoot:   "/home/user/myproject",
+			branchName: "feature/auth",
+			expected:   "../worktrees-feature/auth",
+		},
+		{
+			name:       "expand TARGET_BRANCH (alias)",
+			input:      "../worktrees-${TARGET_BRANCH}",
+			repoRoot:   "/home/user/myproject",
+			branchName: "feature/auth",
+			expected:   "../worktrees-feature/auth",
+		},
+		{
+			name:       "expand BRANCH_SLUG",
+			input:      "../${DIRNAME}-${BRANCH_SLUG}",
+			repoRoot:   "/home/user/myproject",
+			branchName: "feature/auth",
+			expected:   "../myproject-feature-auth",
+		},
+		{
+			name:       "expand TARGET_SLUG (alias)",
+			input:      "../${DIRNAME}-${TARGET_SLUG}",
+			repoRoot:   "/home/user/myproject",
+			branchName: "feature/auth",
+			expected:   "../myproject-feature-auth",
+		},
+		{
+			name:       "multiple variables",
+			input:      "../${DIRNAME}___${BRANCH_SLUG}",
+			repoRoot:   "/home/user/myproject",
+			branchName: "feature/auth",
+			expected:   "../myproject___feature-auth",
+		},
+		{
+			name:       "no variables",
+			input:      "../worktrees",
+			repoRoot:   "/home/user/myproject",
+			branchName: "feature/auth",
+			expected:   "../worktrees",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ExpandVariables(tt.input, tt.repoRoot, tt.branchName)
+			if result != tt.expected {
+				t.Errorf("Expected %s, got %s", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestSlugify(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"feature/auth", "feature-auth"},
+		{"hotfix/bug-123", "hotfix-bug-123"},
+		{"main", "main"},
+		{"feature/nested/deep", "feature-nested-deep"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := slugify(tt.input)
+			if result != tt.expected {
+				t.Errorf("Expected %s, got %s", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestResolveWorktreePath_WithVariables(t *testing.T) {
+	tests := []struct {
+		name         string
+		config       *Config
+		repoRoot     string
+		worktreeName string
+		expected     string
+	}{
+		{
+			name: "base_dir with DIRNAME variable",
+			config: &Config{
+				Defaults: Defaults{
+					BaseDir: "../${DIRNAME}-worktrees",
+				},
+			},
+			repoRoot:     "/home/user/myproject",
+			worktreeName: "feature/auth",
+			expected:     "/home/user/myproject-worktrees/feature/auth",
+		},
+		{
+			name: "base_dir with BRANCH_SLUG variable",
+			config: &Config{
+				Defaults: Defaults{
+					BaseDir: "../${DIRNAME}___${BRANCH_SLUG}",
+				},
+			},
+			repoRoot:     "/home/user/myproject",
+			worktreeName: "feature/auth",
+			expected:     "/home/user/myproject___feature-auth/feature/auth",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.config.ResolveWorktreePath(tt.repoRoot, tt.worktreeName)
+			if result != tt.expected {
+				t.Errorf("Expected %s, got %s", tt.expected, result)
+			}
+		})
+	}
+}
+
 func TestHasHooks(t *testing.T) {
 	tests := []struct {
 		name     string

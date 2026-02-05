@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -197,9 +198,49 @@ func (c *Config) HasHooks() bool {
 	return len(c.Hooks.PostCreate) > 0
 }
 
+// slugify converts a branch name to a slug (replaces / with -)
+func slugify(s string) string {
+	return strings.ReplaceAll(s, "/", "-")
+}
+
+// ExpandVariables expands placeholder variables in the given string.
+// Supported variables:
+//   - ${DIRNAME} - Directory name (basename) of the repository root
+//   - ${PATHNAME} - Absolute path of the repository root
+//   - ${BRANCH} - Target branch name (alias: ${TARGET_BRANCH})
+//   - ${BRANCH_SLUG} - Slugified branch name (alias: ${TARGET_SLUG})
+func ExpandVariables(s, repoRoot, branchName string) string {
+	// Get absolute path of repoRoot
+	absRepoRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		absRepoRoot = repoRoot
+	}
+
+	// Get directory name (basename)
+	dirName := filepath.Base(absRepoRoot)
+
+	// Create slug from branch name
+	branchSlug := slugify(branchName)
+
+	// Replace variables
+	result := s
+	result = strings.ReplaceAll(result, "${DIRNAME}", dirName)
+	result = strings.ReplaceAll(result, "${PATHNAME}", absRepoRoot)
+	result = strings.ReplaceAll(result, "${BRANCH}", branchName)
+	result = strings.ReplaceAll(result, "${TARGET_BRANCH}", branchName)
+	result = strings.ReplaceAll(result, "${BRANCH_SLUG}", branchSlug)
+	result = strings.ReplaceAll(result, "${TARGET_SLUG}", branchSlug)
+
+	return result
+}
+
 // ResolveWorktreePath resolves the full path for a worktree given a name
 func (c *Config) ResolveWorktreePath(repoRoot, worktreeName string) string {
 	baseDir := c.Defaults.BaseDir
+
+	// Expand variables in baseDir
+	baseDir = ExpandVariables(baseDir, repoRoot, worktreeName)
+
 	if !filepath.IsAbs(baseDir) {
 		baseDir = filepath.Join(repoRoot, baseDir)
 	}
