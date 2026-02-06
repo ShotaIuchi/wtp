@@ -6,7 +6,278 @@ import (
 	"testing"
 )
 
+func TestMergeConfig(t *testing.T) {
+	t.Run("override scalar fields", func(t *testing.T) {
+		base := &Config{
+			Version:  "1.0",
+			Defaults: Defaults{BaseDir: "../base-dir"},
+		}
+		override := &Config{
+			Version:  "2.0",
+			Defaults: Defaults{BaseDir: "../override-dir"},
+		}
+		result := MergeConfig(base, override)
+		if result.Version != "2.0" {
+			t.Errorf("Expected version 2.0, got %s", result.Version)
+		}
+		if result.Defaults.BaseDir != "../override-dir" {
+			t.Errorf("Expected base_dir ../override-dir, got %s", result.Defaults.BaseDir)
+		}
+	})
+
+	t.Run("empty override keeps base", func(t *testing.T) {
+		base := &Config{
+			Version:  "1.0",
+			Defaults: Defaults{BaseDir: "../base-dir"},
+		}
+		override := &Config{}
+		result := MergeConfig(base, override)
+		if result.Version != "1.0" {
+			t.Errorf("Expected version 1.0, got %s", result.Version)
+		}
+		if result.Defaults.BaseDir != "../base-dir" {
+			t.Errorf("Expected base_dir ../base-dir, got %s", result.Defaults.BaseDir)
+		}
+	})
+
+	t.Run("hooks concatenated", func(t *testing.T) {
+		base := &Config{
+			Hooks: Hooks{
+				PostCreate: []Hook{
+					{Type: HookTypeCommand, Command: "echo A"},
+					{Type: HookTypeCommand, Command: "echo B"},
+				},
+			},
+		}
+		override := &Config{
+			Hooks: Hooks{
+				PostCreate: []Hook{
+					{Type: HookTypeCommand, Command: "echo C"},
+				},
+			},
+		}
+		result := MergeConfig(base, override)
+		if len(result.Hooks.PostCreate) != 3 {
+			t.Fatalf("Expected 3 hooks, got %d", len(result.Hooks.PostCreate))
+		}
+		if result.Hooks.PostCreate[0].Command != "echo A" {
+			t.Errorf("Expected first hook 'echo A', got %s", result.Hooks.PostCreate[0].Command)
+		}
+		if result.Hooks.PostCreate[1].Command != "echo B" {
+			t.Errorf("Expected second hook 'echo B', got %s", result.Hooks.PostCreate[1].Command)
+		}
+		if result.Hooks.PostCreate[2].Command != "echo C" {
+			t.Errorf("Expected third hook 'echo C', got %s", result.Hooks.PostCreate[2].Command)
+		}
+	})
+
+	t.Run("override without hooks keeps base hooks", func(t *testing.T) {
+		base := &Config{
+			Hooks: Hooks{
+				PostCreate: []Hook{
+					{Type: HookTypeCommand, Command: "echo A"},
+				},
+			},
+		}
+		override := &Config{}
+		result := MergeConfig(base, override)
+		if len(result.Hooks.PostCreate) != 1 {
+			t.Fatalf("Expected 1 hook, got %d", len(result.Hooks.PostCreate))
+		}
+		if result.Hooks.PostCreate[0].Command != "echo A" {
+			t.Errorf("Expected hook 'echo A', got %s", result.Hooks.PostCreate[0].Command)
+		}
+	})
+}
+
+func TestLoadConfig_GlobalOnly(t *testing.T) {
+	globalDir := t.TempDir()
+	repoDir := t.TempDir() // no config file here
+
+	globalConfig := `version: "1.0"
+defaults:
+  base_dir: "../global-wt"
+hooks:
+  post_create:
+    - type: command
+      command: "echo global"
+`
+	if err := os.WriteFile(filepath.Join(globalDir, ConfigFileName), []byte(globalConfig), 0o644); err != nil {
+		t.Fatalf("Failed to write global config: %v", err)
+	}
+
+	original := userHomeDir
+	userHomeDir = func() (string, error) { return globalDir, nil }
+	t.Cleanup(func() { userHomeDir = original })
+
+	config, err := LoadConfig(repoDir)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if config.Defaults.BaseDir != "../global-wt" {
+		t.Errorf("Expected base_dir '../global-wt', got %s", config.Defaults.BaseDir)
+	}
+	if len(config.Hooks.PostCreate) != 1 {
+		t.Fatalf("Expected 1 hook, got %d", len(config.Hooks.PostCreate))
+	}
+	if config.Hooks.PostCreate[0].Command != "echo global" {
+		t.Errorf("Expected hook command 'echo global', got %s", config.Hooks.PostCreate[0].Command)
+	}
+}
+
+func TestLoadConfig_RepoOverridesGlobalBaseDir(t *testing.T) {
+	globalDir := t.TempDir()
+	repoDir := t.TempDir()
+
+	globalConfig := `version: "1.0"
+defaults:
+  base_dir: "../global-wt"
+`
+	repoConfig := `version: "1.0"
+defaults:
+  base_dir: "../repo-wt"
+`
+	if err := os.WriteFile(filepath.Join(globalDir, ConfigFileName), []byte(globalConfig), 0o644); err != nil {
+		t.Fatalf("Failed to write global config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ConfigFileName), []byte(repoConfig), 0o644); err != nil {
+		t.Fatalf("Failed to write repo config: %v", err)
+	}
+
+	original := userHomeDir
+	userHomeDir = func() (string, error) { return globalDir, nil }
+	t.Cleanup(func() { userHomeDir = original })
+
+	config, err := LoadConfig(repoDir)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if config.Defaults.BaseDir != "../repo-wt" {
+		t.Errorf("Expected base_dir '../repo-wt', got %s", config.Defaults.BaseDir)
+	}
+}
+
+func TestLoadConfig_HooksConcatenated(t *testing.T) {
+	globalDir := t.TempDir()
+	repoDir := t.TempDir()
+
+	globalConfig := `hooks:
+  post_create:
+    - type: command
+      command: "echo A"
+    - type: command
+      command: "echo B"
+`
+	repoConfig := `hooks:
+  post_create:
+    - type: command
+      command: "echo C"
+`
+	if err := os.WriteFile(filepath.Join(globalDir, ConfigFileName), []byte(globalConfig), 0o644); err != nil {
+		t.Fatalf("Failed to write global config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ConfigFileName), []byte(repoConfig), 0o644); err != nil {
+		t.Fatalf("Failed to write repo config: %v", err)
+	}
+
+	original := userHomeDir
+	userHomeDir = func() (string, error) { return globalDir, nil }
+	t.Cleanup(func() { userHomeDir = original })
+
+	config, err := LoadConfig(repoDir)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if len(config.Hooks.PostCreate) != 3 {
+		t.Fatalf("Expected 3 hooks, got %d", len(config.Hooks.PostCreate))
+	}
+	if config.Hooks.PostCreate[0].Command != "echo A" {
+		t.Errorf("Expected first hook 'echo A', got %s", config.Hooks.PostCreate[0].Command)
+	}
+	if config.Hooks.PostCreate[1].Command != "echo B" {
+		t.Errorf("Expected second hook 'echo B', got %s", config.Hooks.PostCreate[1].Command)
+	}
+	if config.Hooks.PostCreate[2].Command != "echo C" {
+		t.Errorf("Expected third hook 'echo C', got %s", config.Hooks.PostCreate[2].Command)
+	}
+}
+
+func TestLoadConfig_GlobalHooksOnlyWhenRepoHasNone(t *testing.T) {
+	globalDir := t.TempDir()
+	repoDir := t.TempDir()
+
+	globalConfig := `hooks:
+  post_create:
+    - type: command
+      command: "echo global"
+`
+	repoConfig := `defaults:
+  base_dir: "../repo-wt"
+`
+	if err := os.WriteFile(filepath.Join(globalDir, ConfigFileName), []byte(globalConfig), 0o644); err != nil {
+		t.Fatalf("Failed to write global config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ConfigFileName), []byte(repoConfig), 0o644); err != nil {
+		t.Fatalf("Failed to write repo config: %v", err)
+	}
+
+	original := userHomeDir
+	userHomeDir = func() (string, error) { return globalDir, nil }
+	t.Cleanup(func() { userHomeDir = original })
+
+	config, err := LoadConfig(repoDir)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if config.Defaults.BaseDir != "../repo-wt" {
+		t.Errorf("Expected base_dir '../repo-wt', got %s", config.Defaults.BaseDir)
+	}
+	if len(config.Hooks.PostCreate) != 1 {
+		t.Fatalf("Expected 1 hook, got %d", len(config.Hooks.PostCreate))
+	}
+	if config.Hooks.PostCreate[0].Command != "echo global" {
+		t.Errorf("Expected hook 'echo global', got %s", config.Hooks.PostCreate[0].Command)
+	}
+}
+
+func TestLoadConfig_NeitherExists(t *testing.T) {
+	globalDir := t.TempDir() // no config
+	repoDir := t.TempDir()   // no config
+
+	original := userHomeDir
+	userHomeDir = func() (string, error) { return globalDir, nil }
+	t.Cleanup(func() { userHomeDir = original })
+
+	config, err := LoadConfig(repoDir)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if config.Version != CurrentVersion {
+		t.Errorf("Expected version %s, got %s", CurrentVersion, config.Version)
+	}
+	if config.Defaults.BaseDir != DefaultBaseDir {
+		t.Errorf("Expected base_dir %s, got %s", DefaultBaseDir, config.Defaults.BaseDir)
+	}
+	if len(config.Hooks.PostCreate) != 0 {
+		t.Errorf("Expected no hooks, got %d", len(config.Hooks.PostCreate))
+	}
+}
+
+func stubHomeDir(t *testing.T) {
+	t.Helper()
+	emptyDir := t.TempDir()
+	original := userHomeDir
+	userHomeDir = func() (string, error) { return emptyDir, nil }
+	t.Cleanup(func() { userHomeDir = original })
+}
+
 func TestLoadConfig_NonExistentFile(t *testing.T) {
+	stubHomeDir(t)
 	tempDir := t.TempDir()
 
 	config, err := LoadConfig(tempDir)
@@ -24,6 +295,7 @@ func TestLoadConfig_NonExistentFile(t *testing.T) {
 }
 
 func TestLoadConfig_ValidFile(t *testing.T) {
+	stubHomeDir(t)
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, ConfigFileName)
 
@@ -78,6 +350,7 @@ hooks:
 }
 
 func TestLoadConfig_CopyHookDefaultsToFrom(t *testing.T) {
+	stubHomeDir(t)
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, ConfigFileName)
 
@@ -108,6 +381,7 @@ hooks:
 }
 
 func TestLoadConfig_InvalidYAML(t *testing.T) {
+	stubHomeDir(t)
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, ConfigFileName)
 
@@ -133,6 +407,7 @@ hooks:
 }
 
 func TestSaveConfig(t *testing.T) {
+	stubHomeDir(t)
 	tempDir := t.TempDir()
 
 	config := &Config{

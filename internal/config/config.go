@@ -53,7 +53,56 @@ const (
 	configFilePermissions = 0o600
 )
 
-// LoadConfig loads configuration from .wtp.yml in the repository root
+// userHomeDir is a package-level variable for testability.
+var userHomeDir = os.UserHomeDir
+
+// loadConfigFromFile reads and unmarshals a config file.
+// Returns nil, nil if the file does not exist.
+func loadConfigFromFile(path string) (*Config, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	// #nosec G304 -- path is derived from validated locations
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	return &config, nil
+}
+
+// MergeConfig merges override into base and returns the result.
+// Scalar fields (Version, BaseDir) use override when non-empty.
+// Hooks.PostCreate is concatenated: base hooks first, then override hooks.
+func MergeConfig(base, override *Config) *Config {
+	result := *base
+
+	if override.Version != "" {
+		result.Version = override.Version
+	}
+
+	if override.Defaults.BaseDir != "" {
+		result.Defaults.BaseDir = override.Defaults.BaseDir
+	}
+
+	if len(override.Hooks.PostCreate) > 0 {
+		merged := make([]Hook, 0, len(base.Hooks.PostCreate)+len(override.Hooks.PostCreate))
+		merged = append(merged, base.Hooks.PostCreate...)
+		merged = append(merged, override.Hooks.PostCreate...)
+		result.Hooks.PostCreate = merged
+	}
+
+	return &result
+}
+
+// LoadConfig loads configuration from ~/.wtp.yml (global) and <repoRoot>/.wtp.yml (repo),
+// merging them with repo config taking precedence for scalar fields.
 func LoadConfig(repoRoot string) (*Config, error) {
 	cleanedRoot := filepath.Clean(repoRoot)
 	if !filepath.IsAbs(cleanedRoot) {
@@ -64,37 +113,39 @@ func LoadConfig(repoRoot string) (*Config, error) {
 		cleanedRoot = absRoot
 	}
 
-	configPath := filepath.Join(cleanedRoot, ConfigFileName)
-
-	// If config file doesn't exist, return default config
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return &Config{
-			Version: CurrentVersion,
-			Defaults: Defaults{
-				BaseDir: "../worktrees",
-			},
-			Hooks: Hooks{},
-		}, nil
+	// Load global config from ~/.wtp.yml
+	var globalCfg *Config
+	if home, err := userHomeDir(); err == nil {
+		globalPath := filepath.Join(home, ConfigFileName)
+		globalCfg, err = loadConfigFromFile(globalPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load global config: %w", err)
+		}
 	}
 
-	// #nosec G304 -- configPath is derived from the validated repository root and fixed file name
-	data, err := os.ReadFile(configPath)
+	// Load repo config from <repoRoot>/.wtp.yml
+	repoPath := filepath.Join(cleanedRoot, ConfigFileName)
+	repoCfg, err := loadConfigFromFile(repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		return nil, fmt.Errorf("failed to load repo config: %w", err)
 	}
 
-	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	// Start with defaults, layer global, then repo
+	result := &Config{}
+	if globalCfg != nil {
+		result = MergeConfig(result, globalCfg)
+	}
+	if repoCfg != nil {
+		result = MergeConfig(result, repoCfg)
 	}
 
 	// Apply defaults, then validate configuration.
-	config.ApplyDefaults()
-	if err := config.Validate(); err != nil {
+	result.ApplyDefaults()
+	if err := result.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	return &config, nil
+	return result, nil
 }
 
 // SaveConfig saves configuration to .git-worktree-plus.yml in the repository root
